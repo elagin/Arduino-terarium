@@ -16,7 +16,7 @@ int deltaT[MAX_DS1820_SENSORS]; // positive delta t 0 = warm, 1 cold
 char buf[40];
 char bufSerial[20];
 int sensorCount = 0;
-long interval = 1000 * 60;           // interval at which to blink (milliseconds)
+long interval = 1000 * 30;           // interval at which to blink (milliseconds)
 long previousMillis = 0;        // will store last time LED was updated
 
 bool isRestart = true;
@@ -145,30 +145,33 @@ void printTemp()
 
 void printTime()
 {
-  lcd.setCursor(0,3);
-  unsigned long Seconds = millis()/1000;
-  const unsigned long  SecondsInDay = 60 * 60 * 24;
-  int day = Seconds / SecondsInDay;
-  // Отбрасываем дни
-  Seconds %= SecondsInDay;
-  int hours = Seconds / 3600;
-  // Отбрасываем часы
-  Seconds %= 3600;
-  // Вычисляем и выводим количество минут
-  int mins = Seconds / 60;
-  // Вычисляем и выводим количество секунд
-  Seconds = Seconds % 60;
+  if(sensorCount < 4)
+  {
+    lcd.setCursor(0,3);
+    unsigned long Seconds = millis()/1000;
+    const unsigned long  SecondsInDay = 60 * 60 * 24;
+    int day = Seconds / SecondsInDay;
+    // Отбрасываем дни
+    Seconds %= SecondsInDay;
+    int hours = Seconds / 3600;
+    // Отбрасываем часы
+    Seconds %= 3600;
+    // Вычисляем и выводим количество минут
+    int mins = Seconds / 60;
+    // Вычисляем и выводим количество секунд
+    Seconds = Seconds % 60;
 
-  sprintf(buf, "%02d %02d:%02d:%02d", day, hours, mins, Seconds);
-  lcd.print(buf);
+    sprintf(buf, "%02d %02d:%02d:%02d", day, hours, mins, Seconds);
+    lcd.print(buf);
+  }
 }
 
 void blink()
 {
-     digitalWrite(13, HIGH);   // set the LED on
-     delay(100);              // wait for a second
-     digitalWrite(13, LOW);    // set the LED off
-     delay(100);              // wait for a second
+  digitalWrite(13, HIGH);   // set the LED on
+  delay(100);              // wait for a second
+  digitalWrite(13, LOW);    // set the LED off
+  delay(100);              // wait for a second
 }
 
 void loop()
@@ -197,6 +200,7 @@ void loop()
     printTemp();
   }
   printTime();
-  delay(300);
+  delay(100);
 }
+
 
