@@ -1,153 +1,183 @@
 // include the library code:
 #include <LiquidCrystal.h>
+#include <OneWire.h>
 #include <DallasTemperature.h>
 
-//DallasTemperature tempSensor;
-OneWire ds(10);  // on pin 10
+// Data wire is plugged into port 2 on the Arduino
+#define ONE_WIRE_BUS 10
+#define TEMPERATURE_PRECISION 9
 
 // initialize the library with the numbers of the interface pins
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
 #define MAX_DS1820_SENSORS 4
-byte addr[MAX_DS1820_SENSORS][8];
-int Temp[MAX_DS1820_SENSORS];
-int TempMax[MAX_DS1820_SENSORS];
-int TempMin[MAX_DS1820_SENSORS];
+
+DeviceAddress sensorAddr[MAX_DS1820_SENSORS];
+float Temp[MAX_DS1820_SENSORS];
+float TempMax[MAX_DS1820_SENSORS];
+float TempMin[MAX_DS1820_SENSORS];
 int deltaT[MAX_DS1820_SENSORS]; // positive delta t 0 = warm, 1 cold
+
+long interval = 1000 * 5;           // interval at which to blink (milliseconds)
+long previousMillis = 0;        // will store last time LED was updated
+int sensorCount = 0;
 char buf[40];
 char bufSerial[20];
-int sensorCount = 0;
-long interval = 1000 * 30;           // interval at which to blink (milliseconds)
-long previousMillis = 0;        // will store last time LED was updated
+char bufFloat[40];
+
+unsigned char screenSizeX=20;
+unsigned char screenSizeY=4;
 
 bool isRestart = true;
+struct sensorData
+{
+    DeviceAddress addr;
+    char name[20];
+};
 
+OneWire oneWire(ONE_WIRE_BUS);  // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
+DallasTemperature sensors(&oneWire);    // Pass our oneWire reference to Dallas Temperature.
+DeviceAddress insideThermometer, outsideThermometer;    // arrays to hold device addresses
+sensorData sensorsName[2] = {0x28, 0x45, 0xAF, 0xC7, 0x02, 0x0, 0x0, 0x2C,"test",
+                             0x28, 0x93, 0xBB, 0xC7, 0x02, 0x00, 0x00, 0x39, "hot"};
 void setup()
 {
-  pinMode(13, OUTPUT);
-  // set up the LCD's number of columns and rows:
-  lcd.begin(20, 4);
-  lcd.setCursor(0,0);
-
-  // Print a message to the LCD.
-  lcd.print("DS1820 scan sensors...");
-  for(int i=0; i < MAX_DS1820_SENSORS; i++)
-  {
-    if(ds.search(addr[i]))
+    lcd.clear();
+    sensors.begin();
+    oneWire.reset_search();
+    for(int i=0; i < MAX_DS1820_SENSORS; i++)
     {
-      sensorCount++;
+        if (!oneWire.search(sensorAddr[i]))
+        {
+            sensors.setResolution(sensorAddr[i], TEMPERATURE_PRECISION);
+            sensorCount++;
+        }
     }
-  }
-  lcd.clear();
-  sprintf(buf, "Found %d sensors", sensorCount);
-  lcd.print(buf);
-  delay(500);
+    
+    pinMode(13, OUTPUT);
+    lcd.begin(screenSizeX, screenSizeY);
+    lcd.setCursor(0,0);
+    sprintf(buf, "Found %d sensors", sensorCount);
+    lcd.print(buf);
+    delay(500);
+    lcd.clear();
+    if(sensorCount==0)
+    {
+        //    ds.reset_search();
+        return;
+    }
+}
 
-  if(sensorCount==0)
-  {
-    ds.reset_search();
-    return;
-  }
-
+// function to print a device address
+void printAddress(DeviceAddress deviceAddress)
+{
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        // zero pad the address if necessary
+        if (deviceAddress[i] < 16) Serial.print("0");
+        Serial.print(deviceAddress[i], HEX);
+    }
 }
 
 void getSensorData()
 {
-  byte i;
-  byte data[12];
-  byte present = 0;
-  digitalWrite(13, HIGH);
-  for( int sensor=0; sensor<sensorCount; sensor++)
-  {
-    if( OneWire::crc8( addr[sensor], 7) != addr[sensor][7])
+    byte present = 0;
+    digitalWrite(13, HIGH);
+    sensors.requestTemperatures();
+    for( int sensor=0; sensor<sensorCount; sensor++)
     {
-      lcd.setCursor(0,0);
-      lcd.print("CRC is not valid");
-      return;
+        Temp[sensor] = sensors.getTempCByIndex(sensor);
+        int prevTemp = Temp[sensor];
+        //    Temp[sensor]=(data[1]<<8)+data[0];//take the two bytes from the response relating to temperature
+        //    Temp[sensor]=Temp[sensor]/16; //divide by 16 to get pure celcius readout
+        if(prevTemp > Temp[sensor])
+        {
+            deltaT[sensor] = 1;
+        }
+        else if(prevTemp < Temp[sensor])
+        {
+            deltaT[sensor] = 0;
+        }
+        else
+        {
+            deltaT[sensor] = 2;
+        }
+        
+        if(Temp[sensor] < TempMin[sensor] || isRestart)
+        {
+            TempMin[sensor] = Temp[sensor];
+        }
+        else if(Temp[sensor] > TempMax[sensor] || isRestart)
+        {
+            TempMax[sensor] = Temp[sensor];
+        }
     }
+    digitalWrite(13, LOW);
+}
 
-    if ( addr[sensor][0] != 0x28)
+char* getName(DeviceAddress deviceAddress)
+{
+    bool isFound = false;
+    uint8_t foundId = 0;
+    
+    for(uint8_t i = 0; i < sizeof(sensorsName); i++)
     {
-      lcd.setCursor(0,0);
-      lcd.print("Device is not a DS18S20 family device.");
-      return;
+        if(compareAddres(sensorsName[i].addr, deviceAddress))
+        {
+            isFound = true;
+            foundId = i;
+        }
     }
-    ds.reset();
-    ds.select(addr[sensor]);
-    ds.write(0x44,1);	   // start conversion, with parasite power on at the end
-  }
-  delay(1000);     // maybe 750ms is enough, maybe not
-  // we might do a ds.depower() here, but the reset will take care of it.
-  for( int sensor=0; sensor<sensorCount; sensor++)
-  {
-    present = ds.reset();
-    ds.select(addr[sensor]);
-    ds.write(0xBE);	   // Read Scratchpad
-
-    for ( i = 0; i < 9; i++) // we need 9 bytes
+    if(isFound)
     {
-      data[i] = ds.read();
-    }
-    int prevTemp = Temp[sensor];
-    Temp[sensor]=(data[1]<<8)+data[0];//take the two bytes from the response relating to temperature
-    Temp[sensor]=Temp[sensor]/16; //divide by 16 to get pure celcius readout
-    if(prevTemp > Temp[sensor])
-    {
-      deltaT[sensor] = 1;
-    }
-    else if(prevTemp < Temp[sensor])
-    {
-      deltaT[sensor] = 0;
+        return (sensorsName[foundId].name);
     }
     else
     {
-      deltaT[sensor] = 2;
+        return "Unknow sensor";
     }
-
-    if(Temp[sensor] < TempMin[sensor] || isRestart)
-    {
-      TempMin[sensor] = Temp[sensor];
-    }
-    else if(Temp[sensor] > TempMax[sensor] || isRestart)
-    {
-      TempMax[sensor] = Temp[sensor];
-    }
-  }
-  digitalWrite(13, LOW);
 }
+
+bool compareAddres(DeviceAddress deviceAddress, DeviceAddress deviceAddress2)
+{
+    int count = 0;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        // zero pad the address if necessary
+        if (deviceAddress[i] == deviceAddress2[i])
+            count ++;
+    }
+    return count==8;
+}
+
 
 void printTemp()
 {
-
-  //  }
-  //   lcd.print(239, BYTE); round
-  //   lcd.print(217, BYTE); // up
-  //      lcd.print(218, BYTE); // down
-  //    lcd.clear();
-  for( int sensor=0; sensor<sensorCount; sensor++)
-  {
-    lcd.setCursor(0,sensor);
-    if(deltaT[sensor] == 0)
+    for( int sensor=0; sensor<sensorCount; sensor++)
     {
-      lcd.print(217, BYTE); // up
+        lcd.setCursor(0,sensor);
+        if(deltaT[sensor] == 0)
+        {
+            lcd.print(217, BYTE); // up
+        }
+        else if(deltaT[sensor] == 1)
+        {
+            lcd.print(218, BYTE); // down
+        }
+        else
+        {
+            lcd.print(239, BYTE); //round
+        }
+        //    sprintf(buf, "%d:%3.2f Min:%3.2f Max:%3.2f", sensor+1, Temp[sensor], TempMin[sensor], TempMax[sensor]);
+        
+        dtostrf(Temp[sensor], 2, 2, bufFloat);
+        sprintf(buf, "%s:%s", getName(sensorAddr[sensor]), bufFloat);
+        lcd.print(buf);
+        //        sprintf(buf, "%d:%d Min:%d Max:%d", sensor+1, Temp[sensor], TempMin[sensor], TempMax[sensor]);
     }
-    else if(deltaT[sensor] == 1)
-    {
-      lcd.print(218, BYTE); // down
-    }
-    else
-    {
-      lcd.print(239, BYTE); //round
-    }
-    sprintf(buf, "%d:%d Min:%d Max:%d", sensor+1, Temp[sensor], TempMin[sensor], TempMax[sensor]);
-    lcd.print(buf);
-  }
 }
 
 void printTime()
 {
-  if(sensorCount < 4)
-  {
-    lcd.setCursor(0,3);
     unsigned long Seconds = millis()/1000;
     const unsigned long  SecondsInDay = 60 * 60 * 24;
     int day = Seconds / SecondsInDay;
@@ -160,47 +190,26 @@ void printTime()
     int mins = Seconds / 60;
     // Вычисляем и выводим количество секунд
     Seconds = Seconds % 60;
-
+    
     sprintf(buf, "%02d %02d:%02d:%02d", day, hours, mins, Seconds);
     lcd.print(buf);
-  }
 }
 
-void blink()
+void loop(void)
 {
-  digitalWrite(13, HIGH);   // set the LED on
-  delay(100);              // wait for a second
-  digitalWrite(13, LOW);    // set the LED off
-  delay(100);              // wait for a second
+    unsigned long currentMillis = millis();
+    if(isRestart)
+    {
+        getSensorData();
+        printTemp();
+        isRestart = false;
+    }
+    if(currentMillis - previousMillis > interval)
+    {
+        
+        previousMillis = currentMillis;
+        getSensorData();
+        printTemp();
+    }
 }
-
-void loop()
-{
-  if(sensorCount==0)
-  {
-    delay(1000);
-    return;
-  }
-
-  lcd.setCursor(0, 0);
-  //  display(analogRead(0)/4/17.517006803);
-
-  if(isRestart)
-  {
-    getSensorData();
-    printTemp();
-    isRestart = false;
-  }
-
-  unsigned long currentMillis = millis();
-  if(currentMillis - previousMillis > interval)
-  {
-    previousMillis = currentMillis;
-    getSensorData();
-    printTemp();
-  }
-  printTime();
-  delay(100);
-}
-
 
