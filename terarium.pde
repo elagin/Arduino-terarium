@@ -11,15 +11,15 @@
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
 #define MAX_DS1820_SENSORS 6
 
-DeviceAddress sensorAddr[MAX_DS1820_SENSORS];
-float Temp[MAX_DS1820_SENSORS];
-float TempMax[MAX_DS1820_SENSORS];
-float TempMin[MAX_DS1820_SENSORS];
-int deltaT[MAX_DS1820_SENSORS]; // positive delta t 0 = warm, 1 cold
+signed int Temp[MAX_DS1820_SENSORS];
+signed int TempMax[MAX_DS1820_SENSORS];
+signed int TempMin[MAX_DS1820_SENSORS];
+signed int TempPrev[MAX_DS1820_SENSORS];
+char deltaT[MAX_DS1820_SENSORS]; // positive delta t 0 = warm, 1 cold
 
-long interval = 1000 * 2;           // interval at which to blink (milliseconds)
+long interval = 1000 * 20;           // interval at which to blink (milliseconds)
 long previousMillis = 0;        // will store last time LED was updated
-int sensorCount = 0;
+unsigned char sensorCount = 0;
 char buf[40];
 char bufSerial[20];
 char bufFloat[40];
@@ -28,22 +28,23 @@ unsigned char screenSizeX=20;
 unsigned char screenSizeY=4;
 
 bool isRestart = true;
+
 struct sensorData
 {
     DeviceAddress addr;
     char name[20];
-    int minLimit;
-    int maxLimit;
+    signed char minLimit;
+    signed char maxLimit;
 };
 
 OneWire oneWire(ONE_WIRE_BUS);  // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 DallasTemperature sensors(&oneWire);    // Pass our oneWire reference to Dallas Temperature.
 DeviceAddress insideThermometer, outsideThermometer;    // arrays to hold device addresses
-sensorData sensorsParams[MAX_DS1820_SENSORS] = {0x28, 0x45, 0xAF, 0xC7, 0x02, 0x0, 0x0, 0x2C,"Remote", 25, 28,
+sensorData sensorsParams[MAX_DS1820_SENSORS] = {0x28, 0x45, 0xAF, 0xC7, 0x02, 0x0, 0x0, 0x2C,"Out", -10, 28, //remote
                              0x28, 0x93, 0xBB, 0xC7, 0x02, 0x00, 0x00, 0x39, "Test", 0, 0,
-                             0x28, 0xB0, 0xDB, 0xC7, 0x02, 0x00, 0x00, 0xC7, "Out", 0, 30,
-                             0x28, 0x9B, 0xC5, 0xC7, 0x02, 0x00, 0x00, 0x57, "Ter cold", 25, 35};
-
+                             0x28, 0xB0, 0xDB, 0xC7, 0x02, 0x00, 0x00, 0xC7, "Testreal", 18, 30,//out
+                             0x28, 0x9B, 0xC5, 0xC7, 0x02, 0x00, 0x00, 0x57, "Ter cold", 22, 35,
+                             0x28, 0xFA, 0xDF, 0xC7, 0x02, 0x00, 0x00, 0x62, "Stepan", 22, 39};
 void setup()
 {
     lcd.clear();
@@ -51,9 +52,9 @@ void setup()
     oneWire.reset_search();
     for(int i=0; i < MAX_DS1820_SENSORS; i++)
     {
-        if(oneWire.search(sensorAddr[i]))
+        if(oneWire.search(sensorsParams[i].addr))
         {
-//            sensors.setResolution(sensorAddr[i], TEMPERATURE_PRECISION);
+            sensors.setResolution(sensorsParams[i].addr, TEMPERATURE_PRECISION);
             sensorCount++;
         }
         else
@@ -92,17 +93,16 @@ void getSensorData()
     byte present = 0;
     digitalWrite(13, HIGH);
     sensors.requestTemperatures();
-    for( int sensor=0; sensor<sensorCount; sensor++)
+
+    for(int sensor=0; sensor<sensorCount; sensor++)
     {
-        Temp[sensor] = sensors.getTempCByIndex(sensor);
-        int prevTemp = Temp[sensor];
-        //    Temp[sensor]=(data[1]<<8)+data[0];//take the two bytes from the response relating to temperature
-        //    Temp[sensor]=Temp[sensor]/16; //divide by 16 to get pure celcius readout
-        if(prevTemp > Temp[sensor])
+        Temp[sensor] = sensors.getTempC(sensorsParams[sensor].addr);
+
+        if(TempPrev[sensor] > Temp[sensor])
         {
             deltaT[sensor] = 1;
         }
-        else if(prevTemp < Temp[sensor])
+        else if(TempPrev[sensor] < Temp[sensor])
         {
             deltaT[sensor] = 0;
         }
@@ -119,7 +119,9 @@ void getSensorData()
         {
             TempMax[sensor] = Temp[sensor];
         }
+        TempPrev[sensor] = Temp[sensor];
     }
+
     digitalWrite(13, LOW);
 }
 
@@ -164,13 +166,20 @@ void printTemp()
     for(int sensor=0; sensor<sensorCount; sensor++)
     {
         lcd.setCursor(0,sensor);
-        lcd.print(getName(sensorAddr[sensor]));
-        
+        lcd.print(getName(sensorsParams[sensor].addr));
+
+        lcd.setCursor(8, sensor);
+        lcd.print(TempMin[sensor]);
+        lcd.print("/");
+        lcd.print(TempMax[sensor]);
+
+//        lcd.print(Temp[sensor]/10);
+
         if(sensorsParams[sensor].minLimit > Temp[sensor])
         {
             lcd.print("!");
         }
-        
+
         dtostrf(Temp[sensor], 2, 2, bufFloat);
         lcd.setCursor(screenSizeX - strlen(bufFloat)-1, sensor);
 
@@ -221,7 +230,6 @@ void loop(void)
     }
     if(currentMillis - previousMillis > interval)
     {
-
         previousMillis = currentMillis;
         getSensorData();
         printTemp();
