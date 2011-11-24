@@ -2,20 +2,27 @@
 #include <LiquidCrystal.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#if defined(ARDUINO) && ARDUINO > 18
+#include <SPI.h>
+#endif
+#include <Ethernet.h>
+#include <EthernetDHCP.h>
 
 // Data wire is plugged into port 2 on the Arduino
-#define ONE_WIRE_BUS 10
+#define ONE_WIRE_BUS 30
 #define TEMPERATURE_PRECISION 9
 
 // initialize the library with the numbers of the interface pins
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
-#define MAX_DS1820_SENSORS 6
+#define MAX_DS1820_SENSORS 5
+
+char displayBuf[200];
 
 signed int TempPrev[MAX_DS1820_SENSORS];
 char deltaT[MAX_DS1820_SENSORS]; // positive delta t 0 = warm, 1 cold
 
 long scanTempInterval = 1000 * 25;        // Интервал замера температуры при больше 25 - не опрашиваются датчики во второй раз
-long printInterval = 1000 * 10;           // Интервал обновления экрана при больше 25 - не опрашиваются датчики во второй раз
+long printInterval = 1000 * 60;           // Интервал обновления экрана при больше 25 - не опрашиваются датчики во второй раз
 
 long previousScanTempMillis = 0;     // Предидущее время замера температуры
 long previousPrintMillis = 0;        // Предидущее время обновления экрана
@@ -34,12 +41,20 @@ char ledAlarm    = 40;
 bool isRestart = true;
 bool isRepaint = false;
 
+// Just a utility function to nicely format an IP address.
+const char* ip_to_str(const uint8_t* ipAddr)
+{
+    static char buf[16];
+    sprintf(buf, "%d.%d.%d.%d\0", ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
+    return buf;
+}
+
 struct sensorData
 {
     DeviceAddress addr;     // Адрес датчика
     char name[20];          // Имя для отображения
     bool        trackMin;   // Отслеживать мин. температуру
-    bool        trackMax;   // Отслеживать макс. температуру    
+    bool        trackMax;   // Отслеживать макс. температуру
     signed char minLimit;   // Минимальный лимит температуры
     signed char maxLimit;   // Максимальный лимит
     signed char minTemp;    // Минимальное значение температуры
@@ -47,8 +62,13 @@ struct sensorData
     signed char temp;       // Текущее значение температуры
 };
 
-const int printRoundSize = 4;
-int printRound[printRoundSize] = {1,0,2,3};
+byte mac[] = {  0xDE, 0xAD, 0xBE, 0xEF, 0xdE, 0xED };
+byte server[] = { 192,168,0,103 }; // ya.ru
+byte ip[] = { 192,168,0,100 };
+//byte server[] = { 77,88,21,3 }; // ya.ru
+
+const int printRoundSize = 5;
+int printRound[printRoundSize] = {0,3,4};
 
 OneWire oneWire(ONE_WIRE_BUS);  // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 DallasTemperature sensors(&oneWire);    // Pass our oneWire reference to Dallas Temperature.
@@ -58,8 +78,10 @@ sensorData sensorsParams[MAX_DS1820_SENSORS] = {
                                                 0x28, 0x93, 0xBB, 0xC7, 0x02, 0x00, 0x00, 0x39, "rename me", false, true, 0, 30, 0, 0, 0,
                                                 0x28, 0xB0, 0xDB, 0xC7, 0x02, 0x00, 0x00, 0xC7, "Test", false, true, 18, 30, 0, 0, 0,//out
                                                 0x28, 0x9B, 0xC5, 0xC7, 0x02, 0x00, 0x00, 0x57, "Ter cold", true, true, 22, 35, 0, 0, 0,
+                                                0x28, 0xEE, 0xD6, 0xC7, 0x02, 0x00, 0x00, 0x16, "Ter warm", true, true, 22, 35, 0, 0, 0,
 //                                              0x28, 0xFA, 0xDF, 0xC7, 0x02, 0x00, 0x00, 0x62, "Stepan", false, false, 22, 39, 0, 0, 0
                                               };
+
 void roundRotate()
 {
     int mem = printRound[0];
@@ -72,6 +94,28 @@ void roundRotate()
 
 void setup()
 {
+    pinMode(10, OUTPUT);
+    pinMode(4, OUTPUT);
+    digitalWrite(10, HIGH);
+    digitalWrite(4, HIGH);
+
+    delay(200);
+    Serial.begin(9600);
+        
+    sprintf(displayBuf, "Attempting to obtain a DHCP lease...");
+    Serial.println(displayBuf);
+    
+    EthernetDHCP.begin(mac);
+//    Ethernet.begin(mac, ip);    
+    const byte* ipAddr = EthernetDHCP.ipAddress();
+
+    sprintf(displayBuf, "A DHCP lease has been obtained.");
+    Serial.println(displayBuf);
+//    lcd.print(displayBuf);
+
+    sprintf(displayBuf, "My IP address is  %s", ip_to_str(ipAddr));
+    Serial.println(displayBuf);
+
     lcd.clear();
     sensors.begin();
     oneWire.reset_search();
@@ -87,12 +131,13 @@ void setup()
             break;
         }
     }
-    
+
     pinMode(ledScanTime, OUTPUT);
     pinMode(ledAlarm, OUTPUT);
     lcd.begin(screenSizeX, screenSizeY);
     lcd.setCursor(0,0);
     sprintf(buf, "Found %d sensors", sensorCount);
+    Serial.println(buf);
     lcd.print(buf);
     delay(500);
     lcd.clear();
@@ -100,7 +145,69 @@ void setup()
     {
         return;
     }
+
+  digitalWrite(4, HIGH);
 }
+
+bool sendToServer(char* aUrl, char* aParams)
+{
+          digitalWrite(4, HIGH);
+    char buf[2048];
+    Client client(server, 80);
+
+    if(client.connect())
+    {
+        Serial.println("connected");
+//        client.println("GET /gettime.php HTTP/1.0");
+
+        sprintf(buf, "GET %s%s HTTP/1.0", aUrl, aParams);
+//	sprintf(buf, "GET /class/backend/meteo.php?temp=%0d.%d&code=123456 HTTP/1.0", (int)f, abs(temp1));
+//        Serial.println(buf);
+        client.println(buf);
+//        client.print(aData);
+        //    client.println("GET / HTTP/1.1");
+        //    client.println("GET /test.php");
+        //    sprintf(buf, "GET /class/backend/meteo.php?temp=%0d.%d&code=123456 HTTP/1.0", (int)f, abs(temp1));
+        client.println();
+//        client.println();
+    }
+    else
+    {
+        // kf you didn't get a connection to the server:
+        Serial.println("connection failed");
+    }
+    /*    if (!client.connected())
+    {
+      Serial.println();
+      Serial.println("disconnecting.");
+        client.stop();
+    }*/
+
+    delay(100); // Что бы сервер успел сгенерить ответ
+    char data[2048];
+    int i = 0;
+    int dataSize = client.available();
+    Serial.print("dataSize: ");
+    Serial.println(dataSize);
+    while(i < dataSize)
+    {
+        data[i] = client.read();
+        i++;
+    }
+    data[i]=0;
+  char szKey[] = "HTTP/1.1 200 OK";
+  if(strncmp (szKey,data, 15)==0)
+  {
+     Serial.println("OK!");
+  }
+else{
+    sprintf(displayBuf, data);
+    Serial.println(displayBuf);
+}
+    client.stop();
+}
+
+
 
 // function to print a device address
 void printAddress(DeviceAddress deviceAddress)
@@ -123,7 +230,7 @@ void getSensorData()
     {
         int sensor = printRound[i];
         sensorsParams[sensor].temp = sensors.getTempC(sensorsParams[sensor].addr);
-        
+
         if(TempPrev[sensor] > sensorsParams[sensor].temp)
         {
             deltaT[sensor] = 1;
@@ -139,7 +246,7 @@ void getSensorData()
         if(sensorsParams[sensor].temp < sensorsParams[sensor].minTemp || isRestart)
         {
             sensorsParams[sensor].minTemp = sensorsParams[sensor].temp;
- 
+
         }
         else if(sensorsParams[sensor].temp > sensorsParams[sensor].maxTemp || isRestart)
         {
@@ -149,16 +256,16 @@ void getSensorData()
             if(sensorsParams[sensor].trackMin && (sensorsParams[sensor].minLimit > sensorsParams[sensor].temp))
             {
                 isAlarm = true;
-            } 
-    
+            }
+
             if(sensorsParams[sensor].trackMax && (sensorsParams[sensor].maxLimit < sensorsParams[sensor].temp))
             {
-                isAlarm = true;          
-            }            
-        
+                isAlarm = true;
+            }
+
         TempPrev[sensor] = sensorsParams[sensor].temp;
     }
-    
+
           if(isAlarm)
           {
               digitalWrite(ledAlarm, HIGH);
@@ -167,7 +274,7 @@ void getSensorData()
           {
               digitalWrite(ledAlarm, LOW);
           }
-    
+
     digitalWrite(ledScanTime, LOW);
     isRepaint = true;
 }
@@ -176,7 +283,7 @@ char* getName(DeviceAddress deviceAddress)
 {
     bool isFound = false;
     uint8_t foundId = 0;
-    
+
     for(uint8_t i = 0; i < sizeof(sensorsParams); i++)
     {
         if(compareAddres(sensorsParams[i].addr, deviceAddress))
@@ -208,6 +315,14 @@ bool compareAddres(DeviceAddress deviceAddress, DeviceAddress deviceAddress2)
 }
 
 
+void sendTemp()
+{
+    char url[50] = "/test.php\0";
+    char params[50] = "?sensor_id=2&temperatura=23\0";
+    sendToServer(url, params);
+}
+
+
 void printTemp()
 {
     int startSensor = 0;
@@ -216,27 +331,40 @@ void printTemp()
     for(int lineNum=startSensor; lineNum < sensorPrintCount; lineNum++)
 //    for(int lineNum=startSensor; lineNum < sensorPrintCount; lineNum++)
     {
+
         int sensor = printRound[lineNum];
+        
+        char url[50] = "/test.php\0";
+//        char params[50] = "?sensor_id=2&temperatura=23\0";
+
+        dtostrf(sensorsParams[sensor].temp, 2, n, bufFloat);
+        
+        sprintf(displayBuf, "?sensor_id=%i&temperatura=%i\0", sensor, sensorsParams[sensor].temp);
+        
+        Serial.println(getName(sensorsParams[sensor].addr));
+                
+        Serial.println(displayBuf);
+        sendToServer(url, displayBuf);        
 //        int sensor = lineNum;
         lcd.setCursor(0,lineNum);
         if(sensorsParams[sensor].trackMin && (sensorsParams[sensor].minLimit > sensorsParams[sensor].temp))
         {
             lcd.print("!Min");
-        }       
+        }
         if(sensorsParams[sensor].trackMax && (sensorsParams[sensor].maxLimit < sensorsParams[sensor].temp))
-        {     
+        {
             lcd.print("!Max");
-        }     
+        }
         lcd.print(getName(sensorsParams[sensor].addr));
-        
+
         lcd.setCursor(11, lineNum);
         lcd.print(sensorsParams[sensor].minTemp);
         lcd.print("/");
         lcd.print(sensorsParams[sensor].maxTemp);
-        
+
         dtostrf(sensorsParams[sensor].temp, 2, n, bufFloat);
         lcd.setCursor(screenSizeX - strlen(bufFloat)-1, lineNum);
-        
+
         if(deltaT[sensor] == 0)
         {
             lcd.print(217, BYTE); // up
@@ -251,9 +379,9 @@ void printTemp()
         }
         lcd.print(bufFloat);
         //        sprintf(buf, "%d:%d Min:%d Max:%d", sensor+1, sensorsParams[sensor].temp, sensorsParams[sensor].minTemp, sensorsParams[sensor].maxTemp);
-        
+
     }
-    
+
     isRepaint = false;
     roundRotate();
 }
@@ -294,7 +422,7 @@ void loop(void)
         previousScanTempMillis = currentMillis;
         getSensorData();
     }
-    if(currentMillis - previousPrintMillis > printInterval || isRepaint)
+    if(currentMillis - previousPrintMillis > printInterval /*|| isRepaint*/)
     {
         lcd.clear();
         previousPrintMillis = currentMillis;
