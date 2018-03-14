@@ -22,8 +22,8 @@ char displayBuf[200];
 signed int TempPrev[MAX_DS1820_SENSORS];
 char deltaT[MAX_DS1820_SENSORS]; // positive delta t 0 = warm, 1 cold
 
-long scanTempInterval = 1000 * 25;        // Интервал замера температуры при больше 25 - не опрашиваются датчики во второй раз
-long printInterval = 1000 * 60;           // Интервал обновления экрана при больше 25 - не опрашиваются датчики во второй раз
+long scanTempInterval = 1000 * 5;        // Интервал замера температуры при больше 25 - не опрашиваются датчики во второй раз
+long printInterval = 1000 * 5;           // Интервал обновления экрана при больше 25 - не опрашиваются датчики во второй раз
 
 long previousScanTempMillis = 0;     // Предидущее время замера температуры
 long previousPrintMillis = 0;        // Предидущее время обновления экрана
@@ -42,13 +42,13 @@ char ledAlarm    = 40;
 bool isRestart = true;
 bool isRepaint = false;
 /*
-// Just a utility function to nicely format an IP address.
-const char* ip_to_str(const uint8_t* ipAddr)
-{
+  // Just a utility function to nicely format an IP address.
+  const char* ip_to_str(const uint8_t* ipAddr)
+  {
   static char buf[16];
   sprintf(buf, "%d.%d.%d.%d\0", ipAddr[0], ipAddr[1], ipAddr[2], ipAddr[3]);
   return buf;
-}
+  }
 */
 struct sensorData
 {
@@ -76,7 +76,7 @@ DallasTemperature sensors(&oneWire);    // Pass our oneWire reference to Dallas 
 DeviceAddress insideThermometer, outsideThermometer;    // arrays to hold device addresses
 sensorData sensorsParams[MAX_DS1820_SENSORS] = {
   0x28, 0x1A, 0xAE, 0xC7, 0x02, 0x0, 0x0, 0xEB, "Out", false, false, 0, 0, 0, 0, 0, //remote
-  0x28, 0x93, 0xBB, 0xC7, 0x02, 0x00, 0x00, 0x39, "rename me", false, true, 0, 30, 0, 0, 0
+  0x28, 0x93, 0xBB, 0xC7, 0x02, 0x00, 0x00, 0x39, "rename", false, true, 0, 30, 0, 0, 0
 };
 
 void roundRotate()
@@ -99,20 +99,20 @@ void setup()
   delay(200);
   Serial.begin(9600);
 
-//  sprintf(displayBuf, "Attempting to obtain a DHCP lease...");
-//  Serial.println(displayBuf);
-/*
-  EthernetDHCP.begin(mac);
-  //    Ethernet.begin(mac, ip);
-  const byte* ipAddr = EthernetDHCP.ipAddress();
+  //  sprintf(displayBuf, "Attempting to obtain a DHCP lease...");
+  //  Serial.println(displayBuf);
+  /*
+    EthernetDHCP.begin(mac);
+    //    Ethernet.begin(mac, ip);
+    const byte* ipAddr = EthernetDHCP.ipAddress();
 
-  sprintf(displayBuf, "A DHCP lease has been obtained.");
-  Serial.println(displayBuf);
-  //    lcd.print(displayBuf);
+    sprintf(displayBuf, "A DHCP lease has been obtained.");
+    Serial.println(displayBuf);
+    //    lcd.print(displayBuf);
 
-  sprintf(displayBuf, "My IP address is  %s", ip_to_str(ipAddr));
-  Serial.println(displayBuf);
-*/
+    sprintf(displayBuf, "My IP address is  %s", ip_to_str(ipAddr));
+    Serial.println(displayBuf);
+  */
   lcd.init();                            // Инициализация lcd
   lcd.backlight();                       // Включаем подсветку
   lcd.clear();
@@ -185,12 +185,14 @@ void getSensorData()
     if (sensorsParams[sensor].temp < sensorsParams[sensor].minTemp || isRestart)
     {
       sensorsParams[sensor].minTemp = sensorsParams[sensor].temp;
-
+      sprintf(buf, "New min temp %s - %d", sensorsParams[sensor].name, sensorsParams[sensor].minTemp);
+      Serial.println(buf);
     }
     else if (sensorsParams[sensor].temp > sensorsParams[sensor].maxTemp || isRestart)
     {
       sensorsParams[sensor].maxTemp = sensorsParams[sensor].temp;
-
+      sprintf(buf, "New max temp %s - %d", sensorsParams[sensor].name, sensorsParams[sensor].maxTemp);
+      Serial.println(buf);
     }
     if (sensorsParams[sensor].trackMin && (sensorsParams[sensor].minLimit > sensorsParams[sensor].temp))
     {
@@ -254,12 +256,12 @@ bool compareAddres(DeviceAddress deviceAddress, DeviceAddress deviceAddress2)
 }
 
 /*
-void sendTemp()
-{
+  void sendTemp()
+  {
   char url[50] = "/test.php\0";
   char params[50] = "?sensor_id=2&temperatura=23\0";
   sendToServer(url, params);
-}
+  }
 */
 
 void printTemp()
@@ -296,27 +298,33 @@ void printTemp()
     }
     lcd.print(getName(sensorsParams[sensor].addr));
 
-    lcd.setCursor(11, lineNum);
+    lcd.setCursor(8, lineNum);
     lcd.print(sensorsParams[sensor].minTemp);
     lcd.print("/");
     lcd.print(sensorsParams[sensor].maxTemp);
 
     dtostrf(sensorsParams[sensor].temp, 2, n, bufFloat);
     lcd.setCursor(screenSizeX - strlen(bufFloat) - 1, lineNum);
-/*
+
     if (deltaT[sensor] == 0)
     {
-      lcd.print(217, BYTE); // up
+      //lcd.print(217, BYTE); // up
+      //lcd.print("\0xD9");
+      lcd.print("A");
     }
     else if (deltaT[sensor] == 1)
     {
-      lcd.print(218, BYTE); // down
+      //lcd.print(218, BYTE); // down
+      //lcd.print("\0xDA");
+      lcd.print("V");
     }
     else
     {
-      lcd.print(239, BYTE); //round
+      //lcd.print(239, BYTE); //round
+      //lcd.print("\0xEF");
+      lcd.print("=");
     }
-*/    
+
     lcd.print(bufFloat);
     //        sprintf(buf, "%d:%d Min:%d Max:%d", sensor+1, sensorsParams[sensor].temp, sensorsParams[sensor].minTemp, sensorsParams[sensor].maxTemp);
 
