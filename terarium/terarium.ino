@@ -1,4 +1,3 @@
-// include the library code:
 #include <LiquidCrystal_I2C.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -98,6 +97,7 @@ void setup()
 
   delay(200);
   Serial.begin(9600);
+  Serial1.begin(9600); // BT 18 - 19 Pins
 
   //  sprintf(displayBuf, "Attempting to obtain a DHCP lease...");
   //  Serial.println(displayBuf);
@@ -275,7 +275,7 @@ void printTemp()
 
     int sensor = printRound[lineNum];
 
-    char url[50] = "/test.php\0";
+    //char url[50] = "/test.php\0";
     //        char params[50] = "?sensor_id=2&temperatura=23\0";
 
     dtostrf(sensorsParams[sensor].temp, 2, n, bufFloat);
@@ -330,6 +330,8 @@ void printTemp()
 
   }
 
+  Serial1.write( Serial.read() );
+
   isRepaint = false;
   roundRotate();
 }
@@ -376,5 +378,64 @@ void loop(void)
     previousPrintMillis = currentMillis;
     printTemp();
     printTime();
+  }
+  char c;
+  if (Serial1.available())
+  {
+    c = Serial1.read();
+    if (c == 't')
+      postBTData();
+  }
+  if (Serial.available())
+  {
+    c = Serial.read();
+    if (c == 't')
+      postBTData();
+  }
+}
+
+void postBTData()
+{
+  Serial1.print("postBTData");
+
+  int startSensor = 0;
+  int sensorPrintCount = min(sensorCount, screenSizeY - 1);
+  const int n = 0;
+  for (int lineNum = startSensor; lineNum < sensorPrintCount; lineNum++)
+  {
+    int sensor = printRound[lineNum];
+    dtostrf(sensorsParams[sensor].temp, 2, n, bufFloat);
+    //sprintf(displayBuf, "?sensor_id=%i&temperatura=%i\0", sensor, sensorsParams[sensor].temp);
+    Serial1.print(getName(sensorsParams[sensor].addr));
+    Serial1.print(";");
+    Serial1.print(sensorsParams[sensor].minTemp);
+    Serial1.print(";");
+    Serial1.print(sensorsParams[sensor].maxTemp);
+    Serial1.print(";");
+    dtostrf(sensorsParams[sensor].temp, 2, n, bufFloat);
+    /*
+        lcd.setCursor(screenSizeX - strlen(bufFloat) - 1, lineNum);
+        if (deltaT[sensor] == 0)
+        {
+          //lcd.print(217, BYTE); // up
+          //lcd.print("\0xD9");
+          lcd.print("A");
+        }
+        else if (deltaT[sensor] == 1)
+        {
+          //lcd.print(218, BYTE); // down
+          //lcd.print("\0xDA");
+          lcd.print("V");
+        }
+        else
+        {
+          //lcd.print(239, BYTE); //round
+          //lcd.print("\0xEF");
+          lcd.print("=");
+        }
+    */
+    Serial1.println(bufFloat);
+    //        sprintf(buf, "%d:%d Min:%d Max:%d", sensor+1, sensorsParams[sensor].temp, sensorsParams[sensor].minTemp, sensorsParams[sensor].maxTemp);
+
   }
 }
